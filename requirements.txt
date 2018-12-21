@@ -1,0 +1,3 @@
+aiopipe
+aiohttp
+ujson
