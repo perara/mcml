@@ -2,6 +2,8 @@ import asyncio
 import random
 import time
 from multiprocessing import Process
+import os
+from aiohttp import web
 from client import Client
 from logger import manager_log
 
@@ -48,11 +50,11 @@ class Manager(Process):
 
     def __init__(self, host="0.0.0.0", port=21000):
         Process.__init__(self)
+
         self.host = host
         self.port = port
         self.loop = None
         self.clients = dict()
-
         self.services = dict()
 
     def run(self):
@@ -61,7 +63,7 @@ class Manager(Process):
 
     async def start_server(self):
         manager_log.warning("Manager is listening on on %s:%s", self.host, self.port)
-        server = await asyncio.start_server(self.on_connect, host=self.host, port=self.port, loop=self.loop)
+        server = await asyncio.start_server(self.on_connect, host=self.host, port=self.port, loop=self.loop, start_serving=True)
         await server.serve_forever()
 
     async def on_connect(self, reader, writer):
@@ -270,12 +272,46 @@ class Struct:
                 obj.start()
             previous_service = cls.__name__
 
+class WebServer(TCPServer):
+    def __init__(self, host='0.0.0.0', port=8080):
+        TCPServer.__init__(self)
+
+    def run(self):
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        self.dist_path = os.path.join(dir_path, "www", "dist", "www")
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self.start_webserver())
+
+        loop.run_forever()
+
+    async def handle(self, request):
+
+        return web.FileResponse(os.path.join(self.dist_path, "index.html"))
+
+
+
+    async def start_webserver(self):
+        app = web.Application()
+
+        app.router.add_static('/', path=str(self.dist_path))
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, 'localhost', 8080)
+        await site.start()
+        print("Started server on http://localhost:8080")
+
+
 
 if __name__ == "__main__":
     """Manager, Could be started anywhere...."""
     manager = Manager(host='127.0.0.1', port=41000)
     manager.daemon = True
     manager.start()
+
+    webserver = WebServer(host='127.0.0.1', port=8080)
+    webserver.daemon = True
+    webserver.start()
 
     """Build Struct."""
     struct = Struct({

@@ -1,3 +1,2 @@
-aiopipe
-aiohttp
 ujson
+aiohttp
