@@ -46,70 +46,6 @@ class Quit(Message):
         super().__init__(command="quit")
 
 
-class Manager(Process):
-
-    def __init__(self, host="0.0.0.0", port=21000):
-        Process.__init__(self)
-
-        self.host = host
-        self.port = port
-        self.loop = None
-        self.clients = dict()
-        self.services = dict()
-
-    def run(self):
-        self.loop = asyncio.new_event_loop()
-        self.loop.run_until_complete(self.start_server())
-
-    async def start_server(self):
-        manager_log.warning("Manager is listening on on %s:%s", self.host, self.port)
-        server = await asyncio.start_server(self.on_connect, host=self.host, port=self.port, loop=self.loop, start_serving=True)
-        await server.serve_forever()
-
-    async def on_connect(self, reader, writer):
-        client = Client(reader, writer)
-        self.clients[client] = client
-        self.loop.create_task(self.read(client))
-
-    async def read(self, client):
-
-        while client.ready:
-            data = await client.read()
-
-            cmd = getattr(self, data.command, self.not_implemented)
-            await cmd(client, data.payload, *data.args)
-        del self.clients[client]
-
-    async def write(self):
-        pass
-
-    async def subscribe_service(self, client, payload, service):
-
-        try:
-            remote_endpoint = random.choice(self.services[service])
-            await client.write(Subscription(endpoint=remote_endpoint))
-        except KeyError as e:
-            pass # client.write()  # TOdo missing service in manager
-
-    async def not_implemented(self, client, payload, *args):
-        client.ready = False
-        print("Client attempts to call unimplemented function!")
-
-    async def quit(self, client, command, **kwargs):
-        client.ready = False
-
-    async def register_service(self, client, payload, service):
-        if service not in self.services:
-            self.services[service] = []
-        self.services[service].append(payload)
-
-        manager_log.warning("Registered %s as a service at %s", service, client.name)
-
-    async def unregister_service(self, client, payload, service):
-        if service in self.services:
-            self.services[service].pop(self.services[service].find(client))
-            manager_log.warning("Unregistered %s from client %s", service, client.name)
-
 
 class TCPServer(Process):
 
@@ -147,6 +83,7 @@ class TCPServer(Process):
             port=self._local_endpoint[1],
             start_serving=True
         )
+
         self._local_endpoint = self._local_endpoint_socket.sockets[0].getsockname()
 
     async def on_client_connect(self, reader, writer):
@@ -156,18 +93,22 @@ class TCPServer(Process):
         #remote_socket = reader.get_extra_info('socket')
         manager_log.warning("[%s:%s] new client: %s:%s" % (local_socket.getsockname()[0], local_socket.getsockname()[1], local_socket.getpeername()[0], local_socket.getpeername()[1]))
 
-        while True:
+        while _client.ready:
             data = await _client.read()
+            await self.on_client_message(_client, data)
             data = await self._process(data)
+
             await self.forward(data)
 
     async def connect_manager(self):
         self._manager_socket = await Client.connect(*self._manager_endpoint)
 
+    async def on_client_message(self, client, x):
+        return None
+
     async def forward(self, x):
         if self._remote_endpoint_socket:
             await self._remote_endpoint_socket.write(x)
-
 
     async def register_service(self):
         await self._manager_socket.write(RegisterService(
@@ -206,6 +147,63 @@ class TCPServer(Process):
         await self.register_service()
         await self.connect_remote_service()
 
+
+class Manager(TCPServer):
+
+    def __init__(self, host="0.0.0.0", port=21000):
+        TCPServer.__init__(self)
+
+        self.host = host
+        self.port = port
+        self.loop = None
+        self.clients = dict()
+        self.services = dict()
+
+    async def create_webserver(self, host, port):
+        app = web.Application()
+        #app.router.add_get('/{path:.*}', self.handle)
+        #app.router.add_static('/', path=str(self.dist_path))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+
+    def run(self):
+        self._loop = asyncio.new_event_loop()
+        self._loop.create_task(self.create_server(host=self.host, port=self.port))
+        self._loop.create_task(self.create_webserver(host=self.host, port=8080))
+        self._loop.run_forever()
+
+    async def on_client_message(self, client, x):
+        cmd = getattr(self, x.command, self.not_implemented)
+        await cmd(client, x.payload, *x.args)
+
+    async def not_implemented(self, client, payload, *args):
+        client.ready = False
+        print("Client attempts to call unimplemented function!")
+
+    async def subscribe_service(self, client, payload, service):
+
+        try:
+            remote_endpoint = random.choice(self.services[service])
+            await client.write(Subscription(endpoint=remote_endpoint))
+        except KeyError as e:
+            pass # client.write()  # TOdo missing service in manager
+
+    async def quit(self, client, command, **kwargs):
+        client.ready = False
+
+    async def register_service(self, client, payload, service):
+        if service not in self.services:
+            self.services[service] = []
+        self.services[service].append(payload)
+
+        manager_log.warning("Registered %s as a service at %s", service, client.name)
+
+    async def unregister_service(self, client, payload, service):
+        if service in self.services:
+            self.services[service].pop(self.services[service].find(client))
+            manager_log.warning("Unregistered %s from client %s", service, client.name)
 
 class Agent(TCPServer):
 
@@ -272,6 +270,7 @@ class Struct:
                 obj.start()
             previous_service = cls.__name__
 
+
 class WebServer(TCPServer):
     def __init__(self, host='0.0.0.0', port=8080):
         TCPServer.__init__(self)
@@ -285,16 +284,19 @@ class WebServer(TCPServer):
         loop.run_forever()
 
     async def handle(self, request):
-
-        return web.FileResponse(os.path.join(self.dist_path, "index.html"))
-
+        """
+        TODO. Fix
+        """
+        if request.url.raw_path != "/":
+            return web.FileResponse(self.dist_path +  request.url.raw_path)
+        else:
+            return web.FileResponse(os.path.join(self.dist_path, "index.html"))
 
 
     async def start_webserver(self):
         app = web.Application()
-
+        app.router.add_get('/{path:.*}', self.handle)
         app.router.add_static('/', path=str(self.dist_path))
-
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, 'localhost', 8080)
@@ -305,27 +307,29 @@ class WebServer(TCPServer):
 
 if __name__ == "__main__":
     """Manager, Could be started anywhere...."""
-    manager = Manager(host='127.0.0.1', port=41000)
+    manager = Manager(host='0.0.0.0', port=41000)
     manager.daemon = True
     manager.start()
 
-    webserver = WebServer(host='127.0.0.1', port=8080)
+    """webserver = WebServer(host='127.0.0.1', port=8080)
     webserver.daemon = True
-    webserver.start()
+    webserver.start()"""
 
-    """Build Struct."""
+    #Build Struct.
     struct = Struct({
         "manager": ('127.0.0.1', 41000),
         "model": [
-            (Agent, 3),
+            (Agent, 1),
             (StateReplace, 1),
-            (RGB2Gray, 1),
+            #(RGB2Gray, 2),
             (Model, 1)
         ]
     })
 
+
     loop = asyncio.get_event_loop()
 
     loop.create_task(struct.build())
+
 
     loop.run_forever()

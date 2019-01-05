@@ -1,5 +1,6 @@
 import asyncio
 import pickle
+import struct
 import ujson
 import zstd
 from asyncio import IncompleteReadError
@@ -9,7 +10,9 @@ from logger import manager_log
 
 
 class Client:
-    SEPARATOR = b'\n\r\n\r'
+    DELIMETER_SIZE = 3
+    DELIMETER = b'\=='
+
     RETRY_TIMER = 1  # TODO 30 when prod
 
     def __init__(self, reader, writer, reconnect=True):
@@ -35,22 +38,24 @@ class Client:
 
     async def read(self):
         try:
-            data = await self.reader.readuntil(separator=Client.SEPARATOR)
-            data = data[:-len(Client.SEPARATOR)]  # Todo optimize?
-
+            data = (await self.reader.readuntil(Client.DELIMETER))[:-Client.DELIMETER_SIZE]
         except IncompleteReadError as e:
-            return Commands.QUIT
+            self.ready = False
+            return None
 
         return await self.deserialize(data)
 
     async def write(self, data):
-        self.writer.write(await self.serialize(data) + Client.SEPARATOR)
+        serialized = await self.serialize(data)
+        self.writer.write(serialized + Client.DELIMETER)
         await self.writer.drain()
 
     async def deserialize(self, cryped_message):
-        return pickle.loads(zstd.decompress(cryped_message))
+        return pickle.loads(cryped_message)
+        #return pickle.loads(zstd.decompress(cryped_message))
 
     async def serialize(self, message):
-        return zstd.compress(
-            pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
-        )
+        return pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
+        #return zstd.compress(
+         #   pickle.dumps(message, protocol=pickle.HIGHEST_PROTOCOL)
+        #)
