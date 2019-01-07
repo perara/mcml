@@ -1,3 +1,6 @@
+import ujson
+
+import aiohttp
 import asyncio
 import random
 import time
@@ -6,6 +9,7 @@ import os
 from aiohttp import web
 from client import Client
 from logger import manager_log
+from urllib.parse import  urljoin
 
 
 class Message:
@@ -18,8 +22,12 @@ class Message:
 
 class RegisterService(Message):
 
-    def __init__(self, service, local_endpoint):
-        super().__init__("register_service", args=(service, ), payload=local_endpoint)
+    def __init__(self, service, local_endpoint, pid, depth):
+        super().__init__("register_service", args=(service, ), payload=dict(
+            local_endpoint=local_endpoint,
+            pid=pid,
+            depth=depth
+        ))
 
 
 class UnregisterService(Message):
@@ -63,6 +71,8 @@ class TCPServer(Process):
         self._remote_endpoint = None
         self._remote_endpoint_socket = None
 
+        self.depth = None
+
         self._loop = None
 
     async def _run(self):
@@ -70,6 +80,9 @@ class TCPServer(Process):
 
     async def _process(self, x):
         return x
+
+    async def set_depth(self, depth):
+        self.depth = depth
 
     async def set_manager(self, host, port):
         self._manager_endpoint = (host, port)
@@ -113,8 +126,10 @@ class TCPServer(Process):
     async def register_service(self):
         await self._manager_socket.write(RegisterService(
             service=self._service_name,
-            local_endpoint=self._local_endpoint)
-        )
+            local_endpoint=self._local_endpoint,
+            pid=self.pid,
+            depth=self.depth
+        ))
 
     async def set_remote_service(self, remote_service_name):
         if not remote_service_name:
@@ -132,6 +147,7 @@ class TCPServer(Process):
         await self._manager_socket.write(SubscribeService(service=self._remote_endpoint_name))
         subscription = await self._manager_socket.read()
 
+
         self._remote_endpoint_socket = await Client.connect(*subscription.args)
 
     def run(self):
@@ -148,6 +164,86 @@ class TCPServer(Process):
         await self.connect_remote_service()
 
 
+class WebServer:
+
+    def __init__(self, manager):
+        self.manager = manager
+        self.script_path = os.path.dirname(os.path.realpath(__file__))
+        self.dist = os.path.join(self.script_path, "www", "dist", "www")
+        self.ws_clients = []
+
+    async def broadcast_loop(self):
+        while True:
+            await self.send_tree()
+            await asyncio.sleep(5)
+
+    async def index(self, request):
+        path = request.rel_url
+        full_path = self.dist + str(path)
+        exists = os.path.exists(full_path)
+
+        if exists:
+            return web.FileResponse(full_path)
+        return web.FileResponse(os.path.join(self.dist, "index.html"))
+
+    async def ws_handler(self, request):
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+
+        self.ws_clients.append(ws)
+        setattr(ws, "channels", {"*"})
+
+        async for msg in ws:
+            if msg.type == aiohttp.WSMsgType.TEXT:
+
+                data = ujson.loads(msg.data)
+                type = data["type"]
+                payload = data["payload"]
+
+                fn = getattr(self, "ws_" + type, self.ws_notfound)
+                await fn(ws, type, payload)
+
+            elif msg.type == aiohttp.WSMsgType.ERROR:
+                print('ws connection closed with exception %s' %
+                      ws.exception())
+
+        self.ws_clients.remove(ws)
+        print('websocket connection closed')
+
+        return ws
+
+    async def ws_subscribe(self, ws, type, payload):
+        channel = payload["channel"]
+        ws.channels.add(channel)
+
+        """await self.send(ws, dict(
+            type=type,
+            payload="Successfully subscribed to " + channel
+        ))"""
+
+    async def ws_notfound(self, ws, type, payload):
+
+        await self.send(ws, dict(
+            type="notfound",
+            payload="Could not find the requested ws route %s" % type
+        ))
+
+    async def send(self, ws, data, channels=None):
+        print("Sending: ", data)
+        data["channels"] = ws.channels if channels is None else channels
+        await ws.send_str(ujson.dumps(data))
+
+    async def ws_tree(self, ws, type, payload):
+        await self.send(ws, {
+            "services": self.manager.services
+        }, channels=[type])
+
+    async def send_tree(self):
+        for ws in self.ws_clients:
+            if "tree" in ws.channels:
+                await self.ws_tree(ws, type="tree", payload={})
+
+
 class Manager(TCPServer):
 
     def __init__(self, host="0.0.0.0", port=21000):
@@ -158,11 +254,17 @@ class Manager(TCPServer):
         self.loop = None
         self.clients = dict()
         self.services = dict()
+        self.www = WebServer(self)
 
     async def create_webserver(self, host, port):
         app = web.Application()
-        #app.router.add_get('/{path:.*}', self.handle)
-        #app.router.add_static('/', path=str(self.dist_path))
+        app.router.add_get('/', self.www.index)
+        app.router.add_get("/ws", self.www.ws_handler)
+        app.router.add_get('/{path:.*}', self.www.index)
+
+
+        #app.router.add_static('/', self.www.dist)
+
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, host, port)
@@ -172,6 +274,7 @@ class Manager(TCPServer):
         self._loop = asyncio.new_event_loop()
         self._loop.create_task(self.create_server(host=self.host, port=self.port))
         self._loop.create_task(self.create_webserver(host=self.host, port=8080))
+        self._loop.create_task(self.www.broadcast_loop())
         self._loop.run_forever()
 
     async def on_client_message(self, client, x):
@@ -186,7 +289,7 @@ class Manager(TCPServer):
 
         try:
             remote_endpoint = random.choice(self.services[service])
-            await client.write(Subscription(endpoint=remote_endpoint))
+            await client.write(Subscription(endpoint=remote_endpoint["local_endpoint"]))
         except KeyError as e:
             pass # client.write()  # TOdo missing service in manager
 
@@ -196,6 +299,7 @@ class Manager(TCPServer):
     async def register_service(self, client, payload, service):
         if service not in self.services:
             self.services[service] = []
+        print(payload)
         self.services[service].append(payload)
 
         manager_log.warning("Registered %s as a service at %s", service, client.name)
@@ -214,7 +318,7 @@ class Agent(TCPServer):
 
         while True:
             await self.forward(str(self.pid))
-            #await asyncio.sleep(1)
+            await asyncio.sleep(1)
 
 
 class StateReplace(TCPServer):
@@ -260,48 +364,20 @@ class Struct:
     async def build(self):
 
         previous_service = None
+        depth = 0  # Process Depth
         for cls, count in reversed(self.struct["model"]):
             for i in range(count):
 
                 obj = cls()
                 await obj.set_manager(*self.struct["manager"])
                 await obj.set_remote_service(remote_service_name=previous_service)
+                await obj.set_depth(depth)
                 obj.daemon = True
                 obj.start()
+
+            depth += 1
             previous_service = cls.__name__
 
-
-class WebServer(TCPServer):
-    def __init__(self, host='0.0.0.0', port=8080):
-        TCPServer.__init__(self)
-
-    def run(self):
-        dir_path = os.path.dirname(os.path.realpath(__file__))
-        self.dist_path = os.path.join(dir_path, "www", "dist", "www")
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.start_webserver())
-
-        loop.run_forever()
-
-    async def handle(self, request):
-        """
-        TODO. Fix
-        """
-        if request.url.raw_path != "/":
-            return web.FileResponse(self.dist_path +  request.url.raw_path)
-        else:
-            return web.FileResponse(os.path.join(self.dist_path, "index.html"))
-
-
-    async def start_webserver(self):
-        app = web.Application()
-        app.router.add_get('/{path:.*}', self.handle)
-        app.router.add_static('/', path=str(self.dist_path))
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, 'localhost', 8080)
-        await site.start()
-        print("Started server on http://localhost:8080")
 
 
 
@@ -311,24 +387,19 @@ if __name__ == "__main__":
     manager.daemon = True
     manager.start()
 
-    """webserver = WebServer(host='127.0.0.1', port=8080)
-    webserver.daemon = True
-    webserver.start()"""
-
     #Build Struct.
     struct = Struct({
         "manager": ('127.0.0.1', 41000),
         "model": [
             (Agent, 1),
             (StateReplace, 1),
-            #(RGB2Gray, 2),
+            (RGB2Gray, 2),
             (Model, 1)
         ]
     })
 
 
     loop = asyncio.get_event_loop()
-
     loop.create_task(struct.build())
 
 
