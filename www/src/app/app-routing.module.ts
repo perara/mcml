@@ -5,7 +5,7 @@ import {NotfoundComponent} from "./notfound/notfound.component";
 import {CloudComponent} from "./cloud/cloud.component";
 
 const routes: Routes = [
-  { path: '', redirectTo: '/project', pathMatch: 'full' },
+  { path: '', redirectTo: '/cloud', pathMatch: 'full' },
   { path: 'project', component: ProjectComponent },
   { path: 'cloud', component: CloudComponent },
   { path: '**', component: NotfoundComponent }

@@ -18,9 +18,9 @@ class TCPServer(Process):
         self._local_endpoint = None
         self._local_endpoint_socket = None
 
-        self._remote_endpoint_name = None
-        self._remote_endpoint = None
-        self._remote_endpoint_socket = None
+        self._remote_endpoint_names = None
+        #self._remote_endpoint = None
+        self._remote_endpoint_sockets = []
 
         self.depth = None
 
@@ -59,6 +59,7 @@ class TCPServer(Process):
 
         while _client.ready:
             data = await _client.read()
+            print(data)
             await self.on_client_message(_client, data)
             data = await self._process(data)
 
@@ -71,10 +72,16 @@ class TCPServer(Process):
         return None
 
     async def forward(self, x):
-        if self._remote_endpoint_socket:
-            await self._remote_endpoint_socket.write(x)
+        if self._remote_endpoint_sockets:
+            for socket in self._remote_endpoint_sockets:
+                await socket.write(x)
 
     async def register_service(self):
+        """
+        This function sends a register  service command to the manager. THe manager then logs the event and add the
+        local endpoint as the specified service (service_name).
+        :return:
+        """
         await self._manager_socket.write(RegisterService(
             service=self._service_name,
             local_endpoint=self._local_endpoint,
@@ -82,24 +89,27 @@ class TCPServer(Process):
             depth=self.depth
         ))
 
-    async def set_remote_service(self, remote_service_name):
-        if not remote_service_name:
+    async def set_remote_service(self, remote_service_names):
+        if not remote_service_names:
             return
 
-        self._remote_endpoint_name = remote_service_name
+        print(remote_service_names)
+        self._remote_endpoint_names = remote_service_names
 
     async def connect_remote_service(self):
         """No remote service defined. Ignore request"""
-        if self._remote_endpoint_name is None:
+        if not self._remote_endpoint_names:
             return
 
-        manager_log.warning("Attempting to connect to remote service '%s'.", self._remote_endpoint_name)
+        for remote_endpoint in self._remote_endpoint_names:
 
-        await self._manager_socket.write(SubscribeService(service=self._remote_endpoint_name))
-        subscription = await self._manager_socket.read()
+            manager_log.warning("Attempting to connect to remote service '%s'.", remote_endpoint)
+            await self._manager_socket.write(SubscribeService(service=remote_endpoint))
+            subscription = await self._manager_socket.read()
 
 
-        self._remote_endpoint_socket = await Client.connect(*subscription.args)
+            remote_endpoint = await Client.connect(*subscription.args)
+            self._remote_endpoint_sockets.append(remote_endpoint)
 
     def run(self):
         self._loop = asyncio.new_event_loop()

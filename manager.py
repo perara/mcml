@@ -27,7 +27,7 @@ class WebServer:
     async def index(self, request):
         path = request.rel_url
         full_path = self.dist + str(path)
-        exists = os.path.exists(full_path)
+        exists = os.path.exists(full_path) and os.path.isfile(full_path)
 
         if exists:
             return web.FileResponse(full_path)
@@ -135,8 +135,13 @@ class Manager(TCPServer):
     async def subscribe_service(self, client, payload, service):
 
         try:
-            remote_endpoint = random.choice(self.services[service])
-            await client.write(Subscription(endpoint=remote_endpoint["local_endpoint"]))
+            remote_endpoint_key = random.choice(list(self.services[service].keys()))
+            remote_endpoint = self.services[service][remote_endpoint_key]
+
+            """Register the remote endpoint as a remote in the service_list"""
+            client.service["remotes"][remote_endpoint_key] = remote_endpoint
+
+            await client.write(Subscription(endpoint=remote_endpoint["local"]))
         except KeyError as e:
             pass # client.write()  # TOdo missing service in manager
 
@@ -145,13 +150,27 @@ class Manager(TCPServer):
 
     async def register_service(self, client, payload, service):
         if service not in self.services:
-            self.services[service] = []
-        print(payload)
-        self.services[service].append(payload)
+            self.services[service] = {}
+
+        # TODO. not really clean
+        service_endpoint = ':'.join(str(x) for x in payload['local_endpoint'])
+        service_pid = payload['pid']
+        service_depth = payload['depth']
+
+        self.services[service][service_endpoint] = dict(
+            pid=service_pid,
+            depth=service_depth,
+            remotes={},
+            local=payload['local_endpoint']
+        )
+
+        """Add reference to the service in the client object"""
+        client.service = self.services[service][service_endpoint]
 
         manager_log.warning("Registered %s as a service at %s", service, client.name)
 
     async def unregister_service(self, client, payload, service):
+        # TODO will crash.
         if service in self.services:
             self.services[service].pop(self.services[service].find(client))
             manager_log.warning("Unregistered %s from client %s", service, client.name)

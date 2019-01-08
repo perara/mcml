@@ -63,9 +63,9 @@ if __name__ == "__main__":
     struct = Struct({
         "manager": ('127.0.0.1', 41000),
         "model": [
-            (Agent, 1),
+            (Agent, 5, (Model, )),
             (StateReplace, 1),
-            (RGB2Gray, 2),
+            (RGB2Gray, 1),
             (Model, 1)
         ]
     })

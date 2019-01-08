@@ -9,6 +9,8 @@ import { FooterComponent } from './layout/footer/footer.component';
 import { NotfoundComponent } from './notfound/notfound.component';
 import { ProjectComponent } from './project/project.component';
 import { CloudComponent } from './cloud/cloud.component';
+import { BrowserAnimationsModule } from '@angular/platform-browser/animations';
+import { MatTabsModule } from '@angular/material/tabs';
 
 @NgModule({
   declarations: [
@@ -22,7 +24,9 @@ import { CloudComponent } from './cloud/cloud.component';
   ],
   imports: [
     BrowserModule,
-    AppRoutingModule
+    AppRoutingModule,
+    BrowserAnimationsModule,
+    MatTabsModule
   ],
   providers: [],
   bootstrap: [AppComponent]
