@@ -15,7 +15,9 @@ class Agent(TCPServer):
 
         while True:
             await self.forward(str(self.pid))
-            await asyncio.sleep(1)
+            await asyncio.sleep(0)
+
+
 
 
 class StateReplace(TCPServer):
@@ -40,17 +42,9 @@ class Model(TCPServer):
 
     def __init__(self):
         super().__init__()
-        self.counter = 0
-        self.time = time.time()
 
     async def _process(self, x):
-        #print(x + " => " + str(self.pid))
-        if time.time() > self.time + 1:
-            print("Msg per sec: %s" % self.counter)
-            self.time = time.time()
-            self.counter = 0
-        self.counter += 1
-
+        pass #print(x)
 
 
 if __name__ == "__main__":
@@ -59,20 +53,20 @@ if __name__ == "__main__":
     manager.daemon = True
     manager.start()
 
-    #Build Struct.
+    """Define the structure of the processing unit."""
     struct = Struct({
-        "manager": ('127.0.0.1', 41000),
+        "manager": dict(
+            host='127.0.0.1',
+            port='41000'
+        ),
         "model": [
-            (Agent, 5, (Model, )),
-            (StateReplace, 1),
-            (RGB2Gray, 1),
-            (Model, 1)
+            dict(agent=Agent, population=8, extra_remotes=[]),
+            dict(agent=StateReplace, population=4),
+            dict(agent=RGB2Gray, population=2),
+            dict(agent=Model, population=1)
         ]
     })
 
-
     loop = asyncio.get_event_loop()
     loop.create_task(struct.build())
-
-
     loop.run_forever()

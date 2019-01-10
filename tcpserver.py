@@ -1,9 +1,10 @@
 import asyncio
 from multiprocessing import Process
+from statistics import mean
 
-from client import Client
-from logger import manager_log
-from messages import RegisterService, SubscribeService
+from client import Endpoint
+from logger import manager_log, tcpserver_log
+from messages import RegisterService, SubscribeService, PollResponseMessage
 
 
 class TCPServer(Process):
@@ -12,31 +13,53 @@ class TCPServer(Process):
         Process.__init__(self)
         self._service_name = self.__class__.__name__
 
-        self._manager_endpoint = (None, None)  # Host, Port
-        self._manager_socket = None
-
-        self._local_endpoint = None
+        self._manager_endpoint = None
         self._local_endpoint_socket = None
+        self._local_endpoint = None
+        self._remote_endpoints = []
 
-        self._remote_endpoint_names = None
-        #self._remote_endpoint = None
-        self._remote_endpoint_sockets = []
+        """Throughput performance counter."""
+        self._diag_throughput_in = 0
+        self._diag_throughput_in_history = []  # TOD should be queue 10 -20
+
+        self._diag_throughput_out = 0
+        self._diag_throughput_out_history = [] # TODO should be ququq maxlen = 10-20
+
+        """The sleep duration for the diagnostics module."""
+        self._diag_sleep = 1.0
 
         self.depth = None
 
         self._loop = None
 
+        manager_log.info("[%s]: Initialization complete.", self._service_name)
+
     async def _run(self):
-        pass
+        return False
 
     async def _process(self, x):
         return x
+
+    async def __diagnostics(self):
+        while True:
+            self._diag_throughput_in_history.append(self._diag_throughput_in)
+            self._diag_throughput_out_history.append(self._diag_throughput_out)
+            self._diag_throughput_in = 0
+            self._diag_throughput_out = 0
+
+            await asyncio.sleep(1.0)
 
     async def set_depth(self, depth):
         self.depth = depth
 
     async def set_manager(self, host, port):
-        self._manager_endpoint = (host, port)
+        self._manager_endpoint = await Endpoint.create(
+            service_type="Manager",
+            reader=None,
+            writer=None,
+            host=host,
+            port=port
+        )
 
     async def create_server(self, host="0.0.0.0", port=0):
         self._local_endpoint = (host, port)
@@ -45,36 +68,94 @@ class TCPServer(Process):
             self.on_client_connect,
             host=self._local_endpoint[0],
             port=self._local_endpoint[1],
-            #start_serving=True
         )
 
         self._local_endpoint = self._local_endpoint_socket.sockets[0].getsockname()
 
     async def on_client_connect(self, reader, writer):
         local_socket = writer.get_extra_info('socket')
-        _client = Client(reader=reader, writer=writer, reconnect=True)
+        remote_endpoint_host, remote_endpoint_port = local_socket.getpeername()
 
-        #remote_socket = reader.get_extra_info('socket')
-        manager_log.warning("[%s:%s] new client: %s:%s" % (local_socket.getsockname()[0], local_socket.getsockname()[1], local_socket.getpeername()[0], local_socket.getpeername()[1]))
+        _client = await Endpoint.create(
+            service_type=None,
+            reader=reader,
+            writer=writer,
+            host=remote_endpoint_host,
+            port=remote_endpoint_port
+        )
 
+        self._remote_endpoints.append(_client) # TODO fuckup?
+
+        tcpserver_log.info("[%s] incoming connection from %s:%s. Readystate: %s",
+                           self._service_name,
+                           _client.host,
+                           _client.port,
+                           _client.ready
+                           )
         while _client.ready:
+            """Await data from the client endpoint."""
             data = await _client.read()
-            print(data)
+
+            """Callback on client message."""
             await self.on_client_message(_client, data)
+
+            """Process callback for data manipulation."""
             data = await self._process(data)
 
+            """Forward the data to next hop (if applicable)."""
             await self.forward(data)
 
+            """Update performance counters for ingoing."""
+            self._diag_throughput_in += 1
+
+    async def on_manager_read(self):
+        while self._manager_endpoint.ready:
+            """Await data from the client endpoint."""
+            data = await self._manager_endpoint.read()
+            fn = getattr(self, "manager_response_%s" % data.command, None)
+
+            if fn:
+                await fn(data.command, data.payload)
+
+    async def manager_response_subscription_ok(self, command, payload):
+        endpoint_id = payload["id"]
+        host = payload["host"]
+        port = payload["port"]
+        subscribed_endpoint = [x for x in self._remote_endpoints if x.id == endpoint_id][0]
+
+        await subscribed_endpoint.connect(host=host, port=port)
+
+    async def manager_response_poll_request(self, command, payload):
+        poll_response = PollResponseMessage(data=dict(
+            throughput_in=0 if not self._diag_throughput_in_history else mean(self._diag_throughput_in_history),
+            throughput_out=0 if not self._diag_throughput_out_history else mean(self._diag_throughput_out_history)
+        ))
+        await self._manager_endpoint.write(poll_response)
+
     async def connect_manager(self):
-        self._manager_socket = await Client.connect(*self._manager_endpoint)
+        await self._manager_endpoint.connect()
+        self._manager_endpoint.type = "Manager"
 
     async def on_client_message(self, client, x):
         return None
 
     async def forward(self, x):
-        if self._remote_endpoint_sockets:
-            for socket in self._remote_endpoint_sockets:
-                await socket.write(x)
+        if not self._remote_endpoints:
+            return
+        for endpoint in self._remote_endpoints:
+
+            if not endpoint.ready:
+                continue
+
+            if x is None:
+                continue # print(self._service_name, endpoint)
+                # Todo for Model, x is None. Find out why....
+
+            await endpoint.write(x)
+
+            """Update performance counters for outgoing"""
+            self._diag_throughput_out += 1
+
 
     async def register_service(self):
         """
@@ -82,44 +163,64 @@ class TCPServer(Process):
         local endpoint as the specified service (service_name).
         :return:
         """
-        await self._manager_socket.write(RegisterService(
+        register_service = RegisterService(
             service=self._service_name,
             local_endpoint=self._local_endpoint,
             pid=self.pid,
             depth=self.depth
-        ))
+        )
 
-    async def set_remote_service(self, remote_service_names):
+        tcpserver_log.info("[%s]: registering with the manager service. Payload: %s",
+                           self._service_name,
+                           register_service.payload
+                           )
+
+        await self._manager_endpoint.write(register_service)
+
+    async def set_remote_services(self, remote_service_names):
         if not remote_service_names:
             return
 
-        print(remote_service_names)
-        self._remote_endpoint_names = remote_service_names
+        for remote_service_name in remote_service_names:
+            self._remote_endpoints.append(await Endpoint.create(remote_service_name))
 
     async def connect_remote_service(self):
-        """No remote service defined. Ignore request"""
-        if not self._remote_endpoint_names:
-            return
+        for remote_endpoint in self._remote_endpoints:
 
-        for remote_endpoint in self._remote_endpoint_names:
+            if remote_endpoint.ready:
+                raise ConnectionAbortedError("A remote endpoint was already active! (DEBUG)")
 
-            manager_log.warning("Attempting to connect to remote service '%s'.", remote_endpoint)
-            await self._manager_socket.write(SubscribeService(service=remote_endpoint))
-            subscription = await self._manager_socket.read()
+            service_type = remote_endpoint.type
 
+            subscription_message = SubscribeService(
+                service=service_type,
+                id=remote_endpoint.id
+            )
 
-            remote_endpoint = await Client.connect(*subscription.args)
-            self._remote_endpoint_sockets.append(remote_endpoint)
+            tcpserver_log.info("[%s]: requesting subscription to service '%s'.", self._service_name, service_type)
+
+            """Subscribe to remote service"""
+            await self._manager_endpoint.write(subscription_message)
 
     def run(self):
         self._loop = asyncio.new_event_loop()
-
         self._loop.run_until_complete(self.async_start())
-        self._loop.run_until_complete(self._run())
+
+        tasks = [
+            self._loop.create_task(self.__diagnostics()),
+            self._loop.create_task(self._run())
+        ]
+
+        self._loop.run_until_complete(
+            asyncio.wait(tasks)
+        )
+
         self._loop.run_forever()
 
+
     async def async_start(self):
-        await self.create_server()
         await self.connect_manager()
+        await self.create_server()
         await self.register_service()
         await self.connect_remote_service()
+        self._loop.create_task(self.on_manager_read())

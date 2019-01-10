@@ -7,7 +7,7 @@ import aiohttp
 from aiohttp import web
 
 from logger import manager_log
-from messages import Subscription
+from messages import SubscriptionOK, PollRequestMessage, SubscriptionFail
 from tcpserver import TCPServer
 
 
@@ -76,13 +76,15 @@ class WebServer:
         ))
 
     async def send(self, ws, data, channels=None):
-        print("Sending: ", data)
+        #print("Sending: ", data)
         data["channels"] = ws.channels if channels is None else channels
         await ws.send_str(ujson.dumps(data))
 
     async def ws_tree(self, ws, type, payload):
+        data = [x.toDict() for x in self.manager._remote_endpoints]
+
         await self.send(ws, {
-            "services": self.manager.services
+            "services": data
         }, channels=[type])
 
     async def send_tree(self):
@@ -98,9 +100,8 @@ class Manager(TCPServer):
 
         self.host = host
         self.port = port
+
         self.loop = None
-        self.clients = dict()
-        self.services = dict()
         self.www = WebServer(self)
 
     async def create_webserver(self, host, port):
@@ -120,57 +121,98 @@ class Manager(TCPServer):
     def run(self):
         self._loop = asyncio.new_event_loop()
         self._loop.create_task(self.create_server(host=self.host, port=self.port))
+        self._loop.create_task(self.poll_endpoint_stats())
         self._loop.create_task(self.create_webserver(host=self.host, port=8080))
         self._loop.create_task(self.www.broadcast_loop())
         self._loop.run_forever()
 
     async def on_client_message(self, client, x):
         cmd = getattr(self, x.command, self.not_implemented)
-        await cmd(client, x.payload, *x.args)
+        await cmd(client, x.command, x.payload)
 
-    async def not_implemented(self, client, payload, *args):
+    async def not_implemented(self, client, command, payload):
         client.ready = False
         print("Client attempts to call unimplemented function!")
 
-    async def subscribe_service(self, client, payload, service):
-
-        try:
-            remote_endpoint_key = random.choice(list(self.services[service].keys()))
-            remote_endpoint = self.services[service][remote_endpoint_key]
-
-            """Register the remote endpoint as a remote in the service_list"""
-            client.service["remotes"][remote_endpoint_key] = remote_endpoint
-
-            await client.write(Subscription(endpoint=remote_endpoint["local"]))
-        except KeyError as e:
-            pass # client.write()  # TOdo missing service in manager
-
-    async def quit(self, client, command, **kwargs):
+    async def quit(self, client, command, payload):
         client.ready = False
 
-    async def register_service(self, client, payload, service):
-        if service not in self.services:
-            self.services[service] = {}
+    async def subscribe_service(self, client, command, payload):
+        service = payload["service"]
+        service_id = payload["id"]
 
-        # TODO. not really clean
-        service_endpoint = ':'.join(str(x) for x in payload['local_endpoint'])
+        try:
+            selection = [x for x in self._remote_endpoints if x.type == service]
+
+            if not selection:
+                subscription_fail = SubscriptionFail(
+                    id=service_id,
+                    service=service
+                )
+
+                await client.write(subscription_fail)
+                return False
+
+            remote_endpoint = random.choice(selection)
+
+            """Register the remote endpoint as a remote in the service_list"""
+            client.metadata["remotes"].append(remote_endpoint)
+
+            subscription_ok = SubscriptionOK(
+                id=service_id,
+                service=remote_endpoint.type,
+                host=remote_endpoint.metadata["host"],
+                port=remote_endpoint.metadata["port"]
+            )
+
+            await client.write(subscription_ok)
+
+        except KeyError as e:
+
+            raise NotImplementedError("NOT IMPLEMENTED HANDLER FOR WHEN NO SUBSCRIPTION IS AVAILABLE!")
+
+    async def register_service(self, client, command, payload):
+        service = payload["service"]
+        service_endpoint = payload['local_endpoint']
         service_pid = payload['pid']
         service_depth = payload['depth']
 
-        self.services[service][service_endpoint] = dict(
+        client.metadata.update(dict(
             pid=service_pid,
             depth=service_depth,
-            remotes={},
-            local=payload['local_endpoint']
-        )
+            remotes=[],
+            host=payload['local_endpoint'][0],  # Local in this case is the manager's remote
+            port=payload['local_endpoint'][1],
+            service=service,
+            id=client.id,
+            throughput=0
+        ))
+        client.type = service
 
-        """Add reference to the service in the client object"""
-        client.service = self.services[service][service_endpoint]
-
-        manager_log.warning("Registered %s as a service at %s", service, client.name)
+        manager_log.warning("[%s]: %s (%s:%s) was registered.",
+                            self._service_name, client.type, client.host, client.port)
 
     async def unregister_service(self, client, payload, service):
         # TODO will crash.
+        raise NotImplementedError("IMPLEMENT!")
         if service in self.services:
             self.services[service].pop(self.services[service].find(client))
             manager_log.warning("Unregistered %s from client %s", service, client.name)
+
+    async def poll_response(self, client, command, payload):
+        client.diagnosis.update(payload)
+
+    async def poll_endpoint_stats(self):
+        """
+        Polls all remote endpoints for statistics. This keeps track of all endpoint statuses to easily debug.
+        :return:
+        """
+
+        poll_request = PollRequestMessage()
+        while True:
+            for service in self._remote_endpoints:
+                await service.write(poll_request)
+
+            await asyncio.sleep(1.0)
+
+

@@ -1,38 +1,68 @@
 class Message:
 
-    def __init__(self, command=None, args=None, payload=None):
+    def __init__(self, command=None, payload=None):
         self.command = command
-        self.args = args
         self.payload = payload
 
 
 class RegisterService(Message):
 
     def __init__(self, service, local_endpoint, pid, depth):
-        super().__init__("register_service", args=(service, ), payload=dict(
+        super().__init__("register_service",  payload=dict(
             local_endpoint=local_endpoint,
             pid=pid,
-            depth=depth
+            depth=depth,
+            service=service
         ))
 
 
 class UnregisterService(Message):
 
     def __init__(self, service):
-        super().__init__("unregister_service", args=(service, ))
+        super().__init__("unregister_service", payload=dict(
+            service=service
+        ))
 
 
 class SubscribeService(Message):
 
-    def __init__(self, service):
-        super().__init__("subscribe_service", args=(service, ))
+    def __init__(self, id, service):
+        super().__init__("subscribe_service",  payload=dict(
+            id=id,
+            service=service
+        ))
 
 
-class Subscription(Message):
+class SubscriptionOK(Message):
 
-    def __init__(self, endpoint):
-        super().__init__("subscription", args=tuple(endpoint))
+    def __init__(self, id, service, host, port):
+        super().__init__("subscription_ok", payload=dict(
+            id=id,
+            service=service,
+            host=host,
+            port=port
+        ))
 
+
+class SubscriptionFail(Message):
+
+    def __init__(self, id, service):
+        super().__init__("subscription_fail", payload=dict(
+            id=id,
+            service=service,
+        ))
+
+
+class PollRequestMessage(Message):
+
+    def __init__(self):
+        super().__init__("poll_request", payload=dict())
+
+
+class PollResponseMessage(Message):
+
+    def __init__(self, data):
+        super().__init__("poll_response", payload=data)
 
 class Quit(Message):
 

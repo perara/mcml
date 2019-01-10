@@ -37,6 +37,34 @@ export class CloudComponent implements OnInit {
   treeToNetwork(tree){
     let nodes = [];
     let edges = [];
+
+    tree.forEach(service => {
+      let service_type = service.service;
+      let service_name  = service.remote_endpoint.host + ":" + service.remote_endpoint.port;
+      let service_pid = service.remote_endpoint.pid;
+      let service_depth = service.remote_endpoint.depth;
+
+      nodes.push({
+        id: service_name,
+        label: service_type +
+          "\n" + service_name +
+          "\n" + service_pid +
+          "\nIn: " + service.remote_endpoint.diagnosis.throughput_in +
+          "\nOut: " + service.remote_endpoint.diagnosis.throughput_out,
+          group: service_depth
+      });
+
+      let remotes = service.remote_endpoint.remotes;
+      remotes.forEach(remote => {
+        console.log(remote)
+        let remote_name = remote.remote_endpoint.host + ":" + remote.remote_endpoint.port;
+        edges.push({
+          from: service_name, to: remote_name
+        })
+      })
+    });
+
+    /*
     for(let service_type in tree){
       let services = tree[service_type]
 
@@ -58,7 +86,10 @@ export class CloudComponent implements OnInit {
       }
 
 
-    }
+    }*/
+
+    console.log(nodes);
+    console.log(edges)
 
     return {
       nodes: nodes,
