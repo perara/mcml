@@ -17,6 +17,10 @@ class Struct:
                 agent_cls = data["agent"]
                 population = data['population'] if 'population' in data else 1
                 extra_remotes = data['extra_remotes'] if 'extra_remotes' in data else []
+
+                if extra_remotes and depth == 0:
+                    depth = 1
+
                 all_remotes = [x.__name__ for x in extra_remotes] + previous_service
 
                 for i in range(population):

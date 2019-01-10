@@ -6,7 +6,82 @@
       <div class="col-8" style="height:700px;" #visElement></div>
 
       <div class="col-4" style="border-left: 1px solid #6c757d;">
-        Here should data be on selected node
+
+        <h2>Selected Node</h2>
+        <table *ngIf="selectedNode">
+
+          <tbody>
+            <tr>
+              <th>Name:</th>
+              <td>{{selectedNode.metadata.remote_endpoint.service}}</td>
+            </tr>
+            <tr>
+              <th>Depth:</th>
+              <td>{{selectedNode.metadata.remote_endpoint.depth}}</td>
+            </tr>
+            <tr>
+              <th>PID:</th>
+              <td>{{selectedNode.metadata.remote_endpoint.pid}}</td>
+            </tr>
+            <tr>
+              <th>Host:</th>
+              <td>{{selectedNode.metadata.remote_endpoint.host}}:{{selectedNode.metadata.remote_endpoint.port}}</td>
+            </tr>
+            <tr>
+              <th>Throughput IN:</th>
+              <td>{{selectedNode.metadata.remote_endpoint.diagnosis.throughput_in}}</td>
+            </tr>
+            <tr>
+              <th>Throughput OUT:</th>
+              <td>{{selectedNode.metadata.remote_endpoint.diagnosis.throughput_out}}</td>
+            </tr>
+            <tr>
+              <th>Remotes:</th>
+              <td>
+                <div *ngFor="let remote of selectedNode.metadata.remote_endpoint.remotes">
+                  <button class="btn-sm btn-info" (click)="selectNode(remote.remote_endpoint.id)">
+                    {{remote.remote_endpoint.service}}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+
+
+
+        </table>
+
+        <div *ngIf="selectedNode">
+          <h2>Depth Balancing</h2>
+          <small>Depth balancing for depth {{selectedNode.metadata.remote_endpoint.depth}}. This indicates how well the previous layer got distributed between this level of nodes.</small>
+          <div *ngFor="let depth of Object.keys(depthStat)">
+            <b>Level: {{depth}}</b>
+            <table class="table table-hover">
+              <tbody>
+              <tr>
+                <th>Agent</th>
+                <th>Inbound</th>
+                <th>Outbound</th>
+              </tr>
+              <tr *ngFor="let client_id of Object.keys(depthStat[depth])" >
+                  <td >{{getNode(client_id).label}}</td>
+                  <td>{{depthStat[depth][client_id].inbound | number:'1.0-2'}}/sec<br>
+                    {{(depthStat[depth][client_id].inbound / depthMax[depth].inbound) * 100 | number:'1.0-2'}}%
+                  </td>
+                  <td>{{depthStat[depth][client_id].outbound | number:'1.0-2'}}/sec<br>
+                    {{(depthStat[depth][client_id].outbound / depthMax[depth].outbound) * 100 | number:'1.0-2'}}%
+                  </td>
+              </tr>
+              </tbody>
+
+            </table>
+
+          </div>
+
+        </div>
+
+
+
       </div>
 
     </div>

@@ -66,7 +66,13 @@ class Endpoint:
 
     async def write(self, data):
         serialized = await self.serialize(data)
-        self.writer.write(serialized + Endpoint.DELIMETER)
+        try:
+            self.writer.write(serialized + Endpoint.DELIMETER)
+        except Exception as e:
+            print("------------------------")
+            print(e)
+            print("------------------------")
+            exit(0)
         #await self.writer.drain()
 
     async def deserialize(self, cryped_message):
@@ -83,10 +89,12 @@ class Endpoint:
         return dict(
             service=self.type,
             local_endpoint=dict(
+                id=self.id,
                 host=self.host,
                 port=self.port
             ),
             remote_endpoint=dict(
+                id=self.id,
                 diagnosis=self.diagnosis,
                 service=self.metadata["service"],
                 host=self.metadata["host"],
