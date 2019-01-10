@@ -1,4 +1,5 @@
 import asyncio
+from collections import deque
 from multiprocessing import Process
 from statistics import mean
 
@@ -8,6 +9,8 @@ from messages import RegisterService, SubscribeService, PollResponseMessage
 
 
 class TCPServer(Process):
+
+    SUBSCRIPTION_FAIL_SLEEP = 5
 
     def __init__(self):
         Process.__init__(self)
@@ -20,10 +23,10 @@ class TCPServer(Process):
 
         """Throughput performance counter."""
         self._diag_throughput_in = 0
-        self._diag_throughput_in_history = []  # TOD should be queue 10 -20
+        self._diag_throughput_in_history = deque(maxlen=60)
 
         self._diag_throughput_out = 0
-        self._diag_throughput_out_history = [] # TODO should be ququq maxlen = 10-20
+        self._diag_throughput_out_history = deque(maxlen=60)
 
         """The sleep duration for the diagnostics module."""
         self._diag_sleep = 1.0
@@ -117,6 +120,10 @@ class TCPServer(Process):
             if fn:
                 await fn(data.command, data.payload)
 
+    async def manager_response_subscription_fail(self, command, payload):
+        await asyncio.sleep(TCPServer.SUBSCRIPTION_FAIL_SLEEP, loop=self._loop)
+        await self.connect_remote_service()
+
     async def manager_response_subscription_ok(self, command, payload):
         endpoint_id = payload["id"]
         host = payload["host"]
@@ -188,7 +195,9 @@ class TCPServer(Process):
         for remote_endpoint in self._remote_endpoints:
 
             if remote_endpoint.ready:
-                raise ConnectionAbortedError("A remote endpoint was already active! (DEBUG)")
+                # Do not subscribe when socket is active
+                continue
+                #raise ConnectionAbortedError("A remote endpoint was already active! (DEBUG)")
 
             service_type = remote_endpoint.type
 

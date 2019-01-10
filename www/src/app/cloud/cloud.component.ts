@@ -1,6 +1,6 @@
 import {Component, ElementRef, OnInit, ViewChild} from '@angular/core';
 import {WebsocketService} from "../websocket.service";
-import {Network, Data} from 'vis';
+import {Network, DataSet} from 'vis';
 
 @Component({
   selector: 'app-cloud',
@@ -10,11 +10,16 @@ import {Network, Data} from 'vis';
 export class CloudComponent implements OnInit {
   @ViewChild('visElement') visElement: ElementRef;
   private network: Network;
+  private edges: DataSet<Object> = new DataSet();
+  private nodes: DataSet<Object> = new DataSet();
   networkOptions = {
     layout: {
       hierarchical: {
         direction: "UD",
-        sortMethod: "directed"
+        sortMethod: "directed",
+        nodeSpacing: 425,
+        blockShifting: false,
+        edgeMinimization: false,
       }
     },
     interaction: {
@@ -64,33 +69,6 @@ export class CloudComponent implements OnInit {
       })
     });
 
-    /*
-    for(let service_type in tree){
-      let services = tree[service_type]
-
-      for(let service_name in services){
-        let service = services[service_name];
-
-        nodes.push({
-          id: service_name,
-          label: service_type + "\n" + service_name + "\n" + service.pid,
-          group: service.depth
-        });
-
-        for(let edge_name in service.remotes){
-          edges.push({
-            from: service_name, to: edge_name
-          })
-        }
-
-      }
-
-
-    }*/
-
-    console.log(nodes);
-    console.log(edges)
-
     return {
       nodes: nodes,
       edges: edges
@@ -99,26 +77,34 @@ export class CloudComponent implements OnInit {
 
   constructor(public WSService: WebsocketService) {
 
-
-
-    WSService.on("*").subscribe(x => {
-      console.log(x)
-    });
-
-    WSService.on("tree").subscribe(x => {
-      let tree = x.services;
-
-
-      this.network = new Network(this.visElement.nativeElement, this.treeToNetwork(tree), this.networkOptions);
-
-      console.log(this.network)
-    });
-
-
-
   }
 
   ngOnInit() {
+    this.network = new Network(this.visElement.nativeElement, {
+      nodes: this.nodes,
+      edges: this.edges
+    },this.networkOptions);
+
+
+    this.WSService.on("*").subscribe(x => {
+      console.log(x)
+    });
+
+    this.WSService.on("tree").subscribe(x => {
+      let tree = x.services;
+
+      let data = this.treeToNetwork(tree);
+
+      this.nodes.clear();
+      this.nodes.clear();
+
+      this.nodes.add(data.nodes);
+      this.edges.add(data.edges)
+      this.network.stabilize()
+
+    });
+
+
 
   }
 

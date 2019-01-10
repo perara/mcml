@@ -15,8 +15,13 @@ class Agent(TCPServer):
 
         while True:
             await self.forward(str(self.pid))
-            await asyncio.sleep(0)
+            await asyncio.sleep(.1)
 
+
+class OtherAgent(Agent):
+
+    def __init__(self):
+        super().__init__()
 
 
 
@@ -36,6 +41,8 @@ class RGB2Gray(TCPServer):
 
     async def _process(self, x):
         return x + " => " + str(self.pid)
+
+
 
 
 class Model(TCPServer):
@@ -60,10 +67,17 @@ if __name__ == "__main__":
             port='41000'
         ),
         "model": [
-            dict(agent=Agent, population=8, extra_remotes=[]),
-            dict(agent=StateReplace, population=4),
-            dict(agent=RGB2Gray, population=2),
-            dict(agent=Model, population=1)
+            [
+                dict(agent=OtherAgent, population=4, extra_remotes=[Model])
+            ],
+            [
+                dict(agent=Agent, population=8, extra_remotes=[]),
+                dict(agent=StateReplace, population=4),
+                dict(agent=RGB2Gray, population=2),
+                dict(agent=Model, population=1)
+
+            ]
+
         ]
     })
 
