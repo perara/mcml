@@ -12,7 +12,7 @@ class Agent(TCPServer):
         super().__init__()
 
     async def _run(self):
-        data = np.random.randn(10, 10, 10)
+        data = np.random.randn(80, 80, 3)
 
         while True:
             await self.forward(data)
@@ -41,7 +41,7 @@ class RGB2Gray(TCPServer):
         super().__init__()
 
     async def _process(self, x):
-        return x + " => " + str(self.pid)
+        pass # return x + " => " + str(self.pid)
 
 
 class Model(TCPServer):
@@ -50,7 +50,7 @@ class Model(TCPServer):
         super().__init__()
 
     async def _process(self, x):
-        pass #print(x)
+        pass
 
 
 if __name__ == "__main__":
@@ -66,13 +66,13 @@ if __name__ == "__main__":
             port='41000'
         ),
         "model": [
-            #[
-            #    dict(agent=OtherAgent, population=4, extra_remotes=[Model])
-            #],
+            [
+                dict(agent=OtherAgent, population=4, extra_remotes=[Model])
+            ],
             [
                 dict(agent=Agent, population=5, extra_remotes=[]),
-            #    dict(agent=StateReplace, population=4),
-            #    dict(agent=RGB2Gray, population=2),
+                dict(agent=StateReplace, population=4),
+                dict(agent=RGB2Gray, population=1),
                 dict(agent=Model, population=1)
 
             ]

@@ -10,7 +10,6 @@ class Struct:
             depth = 0  # Process Depth
             for data in reversed(cluster):
 
-
                 if "agent" not in data:
                     raise KeyError("Missing 'agent' key in struct layer.")
 
@@ -26,13 +25,13 @@ class Struct:
                 for i in range(population):
 
                     obj = agent_cls()
+
+                    await obj.set_manager_info(**self.struct["manager"])
+                    await obj.set_remotes_info(remotes=all_remotes)
+                    await obj.set_depth(depth)
+
                     obj.daemon = True
                     obj.start()
-                    await obj.set_manager(**self.struct["manager"])
-                    await obj.set_remote_services(remote_service_names=all_remotes)
-                    await obj.set_depth(depth)
-                    obj.boot()
-
 
                 depth += 1
 
