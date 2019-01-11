@@ -64,6 +64,16 @@ class PollResponseMessage(Message):
     def __init__(self, data):
         super().__init__("poll_response", payload=data)
 
+
+class ReadBufferOverflowMessage(Message):
+
+    def __init__(self, id, duration):
+        super().__init__("read_buffer_overflow", payload=dict(
+            id=id,
+            duration=duration
+        ))
+
+
 class Quit(Message):
 
     def __init__(self):

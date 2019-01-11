@@ -1,6 +1,6 @@
 import asyncio
 import time
-
+import numpy as np
 from builder import Struct
 from manager import Manager
 from tcpserver import TCPServer
@@ -12,10 +12,11 @@ class Agent(TCPServer):
         super().__init__()
 
     async def _run(self):
+        data = np.random.randn(10, 10, 10)
 
         while True:
-            await self.forward(str(self.pid))
-            await asyncio.sleep(.1)
+            await self.forward(data)
+            await asyncio.sleep(0)
 
 
 class OtherAgent(Agent):
@@ -24,14 +25,14 @@ class OtherAgent(Agent):
         super().__init__()
 
 
-
 class StateReplace(TCPServer):
 
     def __init__(self):
         super().__init__()
 
     async def _process(self, x):
-        return x + " => " + str(self.pid)
+        return x
+        #return x + " => " + str(self.pid)
 
 
 class RGB2Gray(TCPServer):
@@ -41,8 +42,6 @@ class RGB2Gray(TCPServer):
 
     async def _process(self, x):
         return x + " => " + str(self.pid)
-
-
 
 
 class Model(TCPServer):
@@ -67,13 +66,13 @@ if __name__ == "__main__":
             port='41000'
         ),
         "model": [
+            #[
+            #    dict(agent=OtherAgent, population=4, extra_remotes=[Model])
+            #],
             [
-                dict(agent=OtherAgent, population=4, extra_remotes=[Model])
-            ],
-            [
-                dict(agent=Agent, population=8, extra_remotes=[]),
-                dict(agent=StateReplace, population=4),
-                dict(agent=RGB2Gray, population=2),
+                dict(agent=Agent, population=5, extra_remotes=[]),
+            #    dict(agent=StateReplace, population=4),
+            #    dict(agent=RGB2Gray, population=2),
                 dict(agent=Model, population=1)
 
             ]

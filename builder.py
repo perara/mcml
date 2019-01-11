@@ -26,11 +26,13 @@ class Struct:
                 for i in range(population):
 
                     obj = agent_cls()
+                    obj.daemon = True
+                    obj.start()
                     await obj.set_manager(**self.struct["manager"])
                     await obj.set_remote_services(remote_service_names=all_remotes)
                     await obj.set_depth(depth)
-                    obj.daemon = True
-                    obj.start()
+                    obj.boot()
+
 
                 depth += 1
 

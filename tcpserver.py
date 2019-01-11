@@ -58,6 +58,7 @@ class TCPServer(Process):
     async def set_manager(self, host, port):
         self._manager_endpoint = await Endpoint.create(
             service_type="Manager",
+            loop=self._loop,
             reader=None,
             writer=None,
             host=host,
@@ -87,7 +88,7 @@ class TCPServer(Process):
             port=remote_endpoint_port
         )
 
-        self._remote_endpoints.append(_client) # TODO fuckup?
+        self._remote_endpoints.append(_client)
 
         tcpserver_log.info("[%s] incoming connection from %s:%s. Readystate: %s",
                            self._service_name,
@@ -149,20 +150,16 @@ class TCPServer(Process):
     async def forward(self, x):
         if not self._remote_endpoints:
             return
+
         for endpoint in self._remote_endpoints:
 
             if not endpoint.ready:
                 continue
 
-            if x is None:
-                continue # print(self._service_name, endpoint)
-                # Todo for Model, x is None. Find out why....
-
             await endpoint.write(x)
 
             """Update performance counters for outgoing"""
             self._diag_throughput_out += 1
-
 
     async def register_service(self):
         """
@@ -214,6 +211,8 @@ class TCPServer(Process):
     def run(self):
         self._loop = asyncio.new_event_loop()
         self._loop.run_until_complete(self.async_start())
+
+    def boot(self):
 
         tasks = [
             self._loop.create_task(self.__diagnostics()),
