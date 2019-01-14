@@ -1,5 +1,3 @@
-
-
 class Struct:
 
     def __init__(self, struct):
@@ -38,3 +36,4 @@ class Struct:
                 depth += 1
 
                 previous_service = [agent_cls.__name__]
+

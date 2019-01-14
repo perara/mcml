@@ -1,3 +1,7 @@
 numpy
 ujson
 aiohttp
+pynng
+lifter
+msgpack
+uvloop

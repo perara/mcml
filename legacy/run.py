@@ -59,6 +59,8 @@ if __name__ == "__main__":
     manager.daemon = True
     manager.start()
 
+    # TODO much werk. make struct building work...
+
     """Define the structure of the processing unit."""
     struct = Struct({
         "manager": dict(
@@ -83,3 +85,7 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.create_task(struct.build())
     loop.run_forever()
+
+
+
+
